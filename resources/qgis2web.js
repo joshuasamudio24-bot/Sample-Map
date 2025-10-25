@@ -4,15 +4,12 @@ var map = new ol.Map({
     renderer: 'canvas',
     layers: layersList,
     view: new ol.View({
-         maxZoom: 28, minZoom: 1, projection: new ol.proj.Projection({
-            code: 'EPSG:3857',
-            //extent: [-20037508.342789, -20037508.342789, 20037508.342789, 20037508.342789],
-            units: 'm'})
+         maxZoom: 28, minZoom: 1
     })
 });
 
 //initial view - epsg:3857 coordinates if not "Match project CRS"
-map.getView().fit([15494587.309884, -4188472.184388, 15504119.604167, -4182771.220868], map.getSize());
+map.getView().fit([15960718.420947, -4540524.331699, 16047881.158992, -4482732.495363], map.getSize());
 
 ////small screen definition
     var hasTouchScreen = map.getViewport().classList.contains('ol-touch');
@@ -115,7 +112,7 @@ var featureOverlay = new ol.layer.Vector({
     updateWhileInteracting: true // optional, for instant visual feedback
 });
 
-var doHighlight = false;
+var doHighlight = true;
 var doHover = false;
 
 function createPopupField(currentFeature, currentFeatureKeys, layer) {
@@ -172,7 +169,6 @@ function onPointerMove(evt) {
     }
     var pixel = map.getEventPixel(evt.originalEvent);
     var coord = evt.coordinate;
-    var popupField;
     var currentFeature;
     var currentLayer;
     var currentFeatureKeys;
@@ -193,7 +189,6 @@ function onPointerMove(evt) {
             if (clusteredFeatures) {
 				clusterLength = clusteredFeatures.length;
 			}
-            var clusterFeature;
             if (typeof clusteredFeatures !== "undefined") {
                 if (doPopup) {
                     for(var n=0; n<clusteredFeatures.length; n++) {
@@ -224,59 +219,63 @@ function onPointerMove(evt) {
     
 	if (doHighlight) {
         if (currentFeature !== highlight) {
-            if (highlight) {
+            // Check if highlight is defined and exists in the source before removing
+            if (highlight && featureOverlay.getSource().getFeatures().includes(highlight)) {
                 featureOverlay.getSource().removeFeature(highlight);
             }
             if (currentFeature) {
-                var featureStyle
+                var featureStyle;
                 if (typeof clusteredFeatures == "undefined") {
-					var style = currentLayer.getStyle();
-					var styleFunction = typeof style === 'function' ? style : function() { return style; };
-					featureStyle = styleFunction(currentFeature)[0];
-				} else {
-					featureStyle = currentLayer.getStyle().toString();
-				}
-
+                    var style = currentLayer.getStyle();
+                    var styleFunction = typeof style === 'function' ? style : function() { return style; };
+                    featureStyle = styleFunction(currentFeature)[0];
+                } else {
+                    featureStyle = currentLayer.getStyle().toString();
+                }
+    
                 if (currentFeature.getGeometry().getType() == 'Point' || currentFeature.getGeometry().getType() == 'MultiPoint') {
-                    var radius
-					if (typeof clusteredFeatures == "undefined") {
-						radius = featureStyle.getImage().getRadius();
-					} else {
-						radius = parseFloat(featureStyle.split('radius')[1].split(' ')[1]) + clusterLength;
-					}
-
+                    var radius = featureStyle.getImage().getRadius();
+                    
                     highlightStyle = new ol.style.Style({
                         image: new ol.style.Circle({
                             fill: new ol.style.Fill({
-                                color: "#ffff00"
+                                color: "#ffff00"  // Yellow fill for point highlight
                             }),
                             radius: radius
                         })
-                    })
+                    });
                 } else if (currentFeature.getGeometry().getType() == 'LineString' || currentFeature.getGeometry().getType() == 'MultiLineString') {
-
+                    
                     var featureWidth = featureStyle.getStroke().getWidth();
-
+                    
                     highlightStyle = new ol.style.Style({
                         stroke: new ol.style.Stroke({
-                            color: '#ffff00',
+                            color: '#ffff00',   // Yellow color for line highlight
                             lineDash: null,
                             width: featureWidth
                         })
                     });
-
-                } else {
+                } else {  // Polygon or MultiPolygon
                     highlightStyle = new ol.style.Style({
+                        stroke: new ol.style.Stroke({
+                            color: '#ffff00',  // Outline color for polygon highlight
+                            width: 2           // Adjust width as needed
+                        }),
                         fill: new ol.style.Fill({
-                            color: '#ffff00'
+                            color: 'rgba(255, 255, 255, 0)'  // Transparent fill for polygon
                         })
-                    })
+                    });
                 }
+                
+                // Add the highlighted feature to the overlay and apply the style
                 featureOverlay.getSource().addFeature(currentFeature);
                 featureOverlay.setStyle(highlightStyle);
+                highlight = currentFeature;
             }
-            highlight = currentFeature;
         }
+    }
+    
+    
     }
 
     if (doHover) {
@@ -289,7 +288,17 @@ function onPointerMove(evt) {
             closer.blur();
         }
     }
-};
+
+    if (doHover) {
+        if (popupText) {
+            overlayPopup.setPosition(coord);
+            content.innerHTML = popupText;
+            container.style.display = 'block';        
+        } else {
+            container.style.display = 'none';
+            closer.blur();
+        }
+    };
 
 map.on('pointermove', onPointerMove);
 
@@ -317,7 +326,6 @@ function onSingleClickFeatures(evt) {
     }
     var pixel = map.getEventPixel(evt.originalEvent);
     var coord = evt.coordinate;
-    var popupField;
     var currentFeature;
     var currentFeatureKeys;
     var clusteredFeatures;
@@ -440,7 +448,7 @@ var Title = new ol.control.Control({
     element: (() => {
         var titleElement = document.createElement('div');
         titleElement.className = 'top-left-title ol-control';
-        titleElement.innerHTML = '<h2 class="project-title">Gifford Hill_Map</h2>';
+        titleElement.innerHTML = '<h2 class="project-title">Ballarat Webmap</h2>';
         return titleElement;
     })(),
     target: 'top-left-container'
@@ -452,6 +460,76 @@ map.addControl(Title)
 
 //geolocate
 
+isTracking = false;
+var geolocateControl = (function (Control) {
+    geolocateControl = function(opt_options) {
+        var options = opt_options || {};
+        var button = document.createElement('button');
+        button.className += ' fa fa-map-marker';
+        var handleGeolocate = function() {
+            if (isTracking) {
+                map.removeLayer(geolocateOverlay);
+                isTracking = false;
+          } else if (geolocation.getTracking()) {
+                map.addLayer(geolocateOverlay);
+                map.getView().setCenter(geolocation.getPosition());
+                isTracking = true;
+          }
+        };
+        button.addEventListener('click', handleGeolocate, false);
+        button.addEventListener('touchstart', handleGeolocate, false);
+        var element = document.createElement('div');
+        element.className = 'geolocate ol-unselectable ol-control';
+        element.appendChild(button);
+        ol.control.Control.call(this, {
+            element: element,
+            target: options.target
+        });
+    };
+    if (Control) geolocateControl.__proto__ = Control;
+    geolocateControl.prototype = Object.create(Control && Control.prototype);
+    geolocateControl.prototype.constructor = geolocateControl;
+    return geolocateControl;
+}(ol.control.Control));
+map.addControl(new geolocateControl())
+
+      var geolocation = new ol.Geolocation({
+  projection: map.getView().getProjection()
+});
+
+
+var accuracyFeature = new ol.Feature();
+geolocation.on('change:accuracyGeometry', function() {
+  accuracyFeature.setGeometry(geolocation.getAccuracyGeometry());
+});
+
+var positionFeature = new ol.Feature();
+positionFeature.setStyle(new ol.style.Style({
+  image: new ol.style.Circle({
+    radius: 6,
+    fill: new ol.style.Fill({
+      color: '#3399CC'
+    }),
+    stroke: new ol.style.Stroke({
+      color: '#fff',
+      width: 2
+    })
+  })
+}));
+
+geolocation.on('change:position', function() {
+  var coordinates = geolocation.getPosition();
+  positionFeature.setGeometry(coordinates ?
+      new ol.geom.Point(coordinates) : null);
+});
+
+var geolocateOverlay = new ol.layer.Vector({
+  source: new ol.source.Vector({
+    features: [accuracyFeature, positionFeature]
+  })
+});
+
+geolocation.setTracking(true);
 
 
 //measurement
@@ -842,19 +920,20 @@ if (elementToMove && parentElement) {
 
 //geocoder
 
-var geocoder = new Geocoder('nominatim', {
-  provider: 'osm',
-  lang: 'en-US',
-  placeholder: 'Search place or address ...',
-  limit: 5,
-  keepOpen: true,
-});
-map.addControl(geocoder);
-document.getElementsByClassName('gcd-gl-btn')[0].className += ' fa fa-search';
-
 
 //layer search
 
+var searchLayer = new SearchLayer({
+    layer: lyr_ParcelAttributesLabel_87,
+    colName: 'Address',
+    zoom: 10,
+    collapsed: true,
+    map: map
+});
+map.addControl(searchLayer);
+document.getElementsByClassName('search-layer')[0].getElementsByTagName('button')[0].className += ' fa fa-binoculars';
+document.getElementsByClassName('search-layer-input-search')[0].placeholder = 'Search feature ...';
+    
 
 //scalebar
 
@@ -893,7 +972,7 @@ map.addControl(bottomAttribution);
 
 var attributionList = document.createElement('li');
 attributionList.innerHTML = `
-	<a href="https://github.com/tomchadwin/qgis2web">qgis2web</a> &middot;
+	<a href="https://github.com/qgis2web/qgis2web">qgis2web</a> &middot;
 	<a href="https://openlayers.org/">OpenLayers</a> &middot;
 	<a href="https://qgis.org/">QGIS</a>	
 `;
